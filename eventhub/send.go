@@ -45,12 +45,6 @@ func main() {
 
 		fmt.Println(s)
 
-		err = hub.Send(ctx, eventhub.NewEventFromString(s))
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
-
 	}
 
 }

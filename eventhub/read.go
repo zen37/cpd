@@ -61,7 +61,7 @@ func main() {
 	for _, partitionID := range info1.PartitionIDs {
 		fmt.Println("PartitionID = ", partitionID)
 		//_, err = hub.Receive(ctx, partitionID, handler)
-		_, err := hub.Receive(ctx, partitionID, handler, eventhub.ReceiveFromTimestamp(time.Now().Add(-time.Hour*2)))
+		_, err := hub.Receive(ctx, partitionID, handler, eventhub.ReceiveFromTimestamp(time.Now().Add(-time.Hour*6)))
 		if err != nil {
 			log.Fatalf("failed to receive for partition ID %s: %s\n", partitionID, err)
 			return
