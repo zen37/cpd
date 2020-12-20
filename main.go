@@ -10,23 +10,29 @@ import (
 )
 
 type yamlCfg struct {
+	AuthType string `yaml:"auth_type"`
+	Consumer struct {
+		Key    string   `yaml:"client_id"`
+		Secret string   `yaml:"client_secret"`
+		Scopes []string `yaml:"scopes"`
+	}
 	Credentials struct {
-		ClientID     string `yaml:"client_id"`
-		ClientSecret string `yaml:"client_secret"`
-		Username     string `yaml:"username"`
-		Password     string `yaml:"password"`
+		Username string `yaml:"username"`
+		Password string `yaml:"password"`
 	}
 	Endpoints struct {
-		TokenURL string `yaml:"token_url"`
+		RedirectURL string `yaml:"redirect_url"`
+		AuthURL     string `yaml:"auth_url"`
+		TokenURL    string `yaml:"token_url"`
 	}
 }
 
 func main() {
+
 	cfg := yamlCfg{}
 
-	//yamlFile, err := ioutil.ReadFile("../.config.yaml")
-	yamlFile, err := ioutil.ReadFile("./salesforce/.config.yaml")
-	if err != nil { // 	log.Printf("File cannot be read - %v ", err)
+	yamlFile, err := ioutil.ReadFile("configs/.salesforce.yaml")
+	if err != nil {
 		log.Fatal(err)
 	}
 
@@ -35,18 +41,32 @@ func main() {
 		log.Fatal(err)
 	}
 
-	sfClient := salesforce.New(salesforce.Config{
+	//fmt.Println(cfg)
+
+	sfClient, err := salesforce.New(salesforce.Auth{
+		AuthType: cfg.AuthType,
+		Consumer: salesforce.Consumer{
+			Key:    cfg.Consumer.Key,
+			Secret: cfg.Consumer.Secret,
+			Scopes: cfg.Consumer.Scopes,
+		},
 		Credentials: salesforce.Credentials{
-			ClientID:     cfg.Credentials.ClientID,
-			ClientSecret: cfg.Credentials.ClientSecret,
-			Username:     cfg.Credentials.Username,
-			Password:     cfg.Credentials.Password,
+			Username: cfg.Credentials.Username,
+			Password: cfg.Credentials.Password,
+		},
+		Endpoints: salesforce.Endpoints{
+			RedirectURL: cfg.Endpoints.RedirectURL,
+			AuthURL:     cfg.Endpoints.AuthURL,
+			TokenURL:    cfg.Endpoints.TokenURL,
 		},
 	})
-
-	token, err := sfClient.GetToken()
 	if err != nil {
 		log.Fatalln(err)
 	}
-	fmt.Println(token)
+	//fmt.Println(sfClient)
+	accessToken, err := sfClient.GetToken()
+	if err != nil {
+		log.Fatalln(err)
+	}
+	fmt.Println(accessToken)
 }
