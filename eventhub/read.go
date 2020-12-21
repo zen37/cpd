@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"sync"
+	"os/signal"
 	"time"
 
 	eventhub "github.com/Azure/azure-event-hubs-go"
@@ -48,46 +48,41 @@ func main() {
 		}
 		os.Exit(0)
 	}
-	// set up wait group to wait for expected message
-	eventReceived := make(chan struct{})
+
+	//	eventReceived := make(chan struct{})
 
 	// declare handler for incoming events
 	handler := func(ctx context.Context, event *eventhub.Event) error {
 		//defer wg.Done()
 		fmt.Printf("received: %s\n", string(event.Data))
 		// notify channel that event was received
-		eventReceived <- struct{}{}
+		//eventReceived <- struct{}{}
 		return nil
 	}
 
-	var wg sync.WaitGroup
-
 	for _, partitionID := range info1.PartitionIDs {
-		wg.Add(1)
 		fmt.Println("PartitionID = ", partitionID)
-		//time.Sleep(11 * time.Second)
-		readPartition(ctx, hub, partitionID, handler, &wg)
+		//_, err := hub.Receive(ctx, partitionID, handler)
+		_, err := hub.Receive(ctx, partitionID, handler, eventhub.ReceiveFromTimestamp(time.Now().Add(-time.Hour*1)))
+		if err != nil {
+			log.Fatalf("failed to receive for partition ID %s: %s\n", partitionID, err)
+			return
+		}
 	}
 
-	wg.Wait()
-	<-eventReceived
+	// Wait for a signal to quit:
+	//signalChan := make(chan struct{})
+	signalChan := make(chan os.Signal, 1)
+	signal.Notify(signalChan, os.Interrupt, os.Kill)
+	<-signalChan
+
+	//	<-eventReceived
 
 	err = hub.Close(ctx)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
-}
-
-func readPartition(ctx context.Context, hub *eventhub.Hub, partitionID string, handler eventhub.Handler, wg *sync.WaitGroup) {
-	defer wg.Done()
-	_, err := hub.Receive(ctx, partitionID, handler)
-	//_, err := hub.Receive(ctx, partitionID, handler, eventhub.ReceiveFromTimestamp(time.Now().Add(-time.Hour*48)))
-	if err != nil {
-		log.Fatalf("failed to receive for partition ID %s: %s\n", partitionID, err)
-		return
-	}
-
 }
 
 /*
