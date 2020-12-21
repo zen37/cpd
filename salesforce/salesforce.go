@@ -129,22 +129,18 @@ func authCode(c *Client, auth Auth) error {
 //GetToken ....
 func (c *Client) GetToken() (*Result, error) {
 
-	fmt.Println("GetToken called ")
-
 	switch c.auth.AuthType {
 	case "password":
-		r, err := getTokenPassword(c)
+		r, err := c.getTokenPassword()
 		if err != nil {
 			return nil, err
 		}
 		return r, nil
 	case "code":
-		fmt.Println("getTokenCode called ")
 		r, err := getTokenCode()
 		if err != nil {
 			return nil, err
 		}
-		fmt.Println("getTokenCode has been called: ", r)
 		return r, nil
 	default:
 		return nil, nil
@@ -208,7 +204,7 @@ func getTokenCode() (*Result, error) {
 	return r, nil
 }
 
-func getTokenPassword(c *Client) (*Result, error) {
+func (c *Client) getTokenPassword() (*Result, error) {
 
 	var r Result
 
@@ -226,6 +222,7 @@ func getTokenPassword(c *Client) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	request.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 
 	response, err := c.client.Do(request)
@@ -233,7 +230,10 @@ func getTokenPassword(c *Client) (*Result, error) {
 		return nil, err
 	}
 	defer response.Body.Close()
-	//log.Println(response.Status)
+
+	if response.StatusCode != 200 {
+		return nil, errors.New(response.Status)
+	}
 
 	body, err := ioutil.ReadAll(response.Body)
 	if err != nil {
