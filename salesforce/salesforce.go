@@ -2,9 +2,13 @@ package salesforce
 
 import (
 	"context"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -13,6 +17,7 @@ import (
 	"strings"
 
 	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/jws"
 )
 
 type Result struct {
@@ -74,6 +79,13 @@ func New(auth Auth) (*Client, error) {
 			return nil, err
 		}
 
+	case "jwt":
+
+		err := authJWT(&c, auth)
+		if err != nil {
+			return nil, err
+		}
+
 	default:
 		return nil, errors.New("unknown authorization type, it should be either: password, code")
 	}
@@ -82,6 +94,18 @@ func New(auth Auth) (*Client, error) {
 
 	return &c, nil
 
+}
+
+func authJWT(c *Client, auth Auth) error {
+
+	c.client = &http.Client{}
+
+	c.auth.Consumer.Key = auth.Consumer.Key
+	c.auth.Consumer.Secret = auth.Consumer.Secret
+
+	c.auth.Endpoints.TokenURL = auth.Endpoints.TokenURL
+
+	return nil
 }
 
 func authPassword(c *Client, auth Auth) error {
@@ -130,18 +154,28 @@ func authCode(c *Client, auth Auth) error {
 func (c *Client) GetToken() (*Result, error) {
 
 	switch c.auth.AuthType {
+
 	case "password":
 		r, err := c.getTokenPassword()
 		if err != nil {
 			return nil, err
 		}
 		return r, nil
+
 	case "code":
 		r, err := getTokenCode()
 		if err != nil {
 			return nil, err
 		}
 		return r, nil
+
+	case "jwt":
+		r, err := c.getTokenJWT()
+		if err != nil {
+			return nil, err
+		}
+		return r, nil
+
 	default:
 		return nil, nil
 	}
@@ -202,6 +236,7 @@ func getTokenCode() (*Result, error) {
 	r.AccessToken = token.AccessToken
 
 	return r, nil
+
 }
 
 func (c *Client) getTokenPassword() (*Result, error) {
@@ -247,4 +282,97 @@ func (c *Client) getTokenPassword() (*Result, error) {
 	}
 
 	return &r, nil
+}
+
+func (c *Client) getTokenJWT() (*Result, error) {
+
+	//https://help.salesforce.com/articleView?id=remoteaccess_oauth_jwt_flow.htm&type=5
+	//https://github.com/golang/oauth2/blob/master/jwt/jwt.go
+
+	var (
+		grantType = "urn:ietf:params:oauth:grant-type:jwt-bearer"
+		header    = &jws.Header{Algorithm: "RS256", Typ: "JWT"}
+		//defaultHeader    = &jws.Header{Algorithm: "RS256", Typ: "JWT"}
+	)
+
+	pkFile, err := ioutil.ReadFile("salesforce/key2.pem")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	pk, err := parseRsaPrivateKeyFromPemStr(string(pkFile))
+	if err != nil {
+		log.Fatal(err)
+	}
+	//fmt.Println(pk)
+
+	claimSet := &jws.ClaimSet{
+		Iss:   c.auth.Consumer.Key + "." + c.auth.Consumer.Secret,
+		Sub:   c.auth.Credentials.Username,
+		Scope: strings.Join(c.auth.Consumer.Scopes, " "),
+		Aud:   c.auth.Endpoints.TokenURL,
+	}
+
+	h := *header
+	//h.KeyID = //https://github.com/golang/oauth2/blob/master/jwt/jwt.go
+
+	jwt, err := jws.Encode(&h, claimSet, pk)
+	if err != nil {
+		return nil, err
+	}
+	//	fmt.Println(claimSet)
+
+	form := url.Values{}
+	form.Set("grant_type", grantType)
+	form.Set("assertion", jwt) //assertion	The assertion is the entire JWT value.
+
+	resp, err := c.client.PostForm(c.auth.Endpoints.TokenURL, form)
+	if err != nil {
+		return nil, err //fmt.Errorf("oauth2: cannot fetch token: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, errors.New(resp.Status)
+	}
+
+	body, err := ioutil.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, err //fmt.Errorf("oauth2: cannot fetch token: %v", err)
+	}
+
+	var r *Result
+
+	err = json.Unmarshal(body, &r)
+	if err != nil {
+		return nil, err
+	}
+
+	fmt.Println("r = ", r)
+
+	return r, nil
+
+	/*
+		claims := jwt.MapClaims{}
+
+		//claims["iss"] = "3MVG99OxTyEMCQ3gNp2PjkqeZKxnmAiG1xV4oHh9AKL_rSK.BoSVPGZHQukXnVjzRgSuQqGn75NL7yfkQcyy7"
+		claims["iss"] = "cpd"
+		claims["sub"] = c.auth.Credentials.Username
+		claims["aud"] = c.auth.Endpoints.TokenURL
+		claims["exp"] = time.Now().Add(time.Minute * 30).Unix()
+	*/
+}
+
+func parseRsaPrivateKeyFromPemStr(privPEM string) (*rsa.PrivateKey, error) {
+	block, _ := pem.Decode([]byte(privPEM))
+	if block == nil {
+		return nil, errors.New("failed to parse PEM block containing the key")
+	}
+
+	priv, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, err
+	}
+
+	return priv, nil
 }
