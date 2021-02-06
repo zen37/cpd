@@ -15,9 +15,10 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
+	"github.com/dgrijalva/jwt-go"
 	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/jws"
 )
 
 type Result struct {
@@ -80,7 +81,6 @@ func New(auth Auth) (*Client, error) {
 		}
 
 	case "jwt":
-
 		err := authJWT(&c, auth)
 		if err != nil {
 			return nil, err
@@ -101,8 +101,7 @@ func authJWT(c *Client, auth Auth) error {
 	c.client = &http.Client{}
 
 	c.auth.Consumer.Key = auth.Consumer.Key
-	c.auth.Consumer.Secret = auth.Consumer.Secret
-
+	c.auth.Credentials.Username = auth.Credentials.Username
 	c.auth.Endpoints.TokenURL = auth.Endpoints.TokenURL
 
 	return nil
@@ -153,6 +152,8 @@ func authCode(c *Client, auth Auth) error {
 //GetToken ....
 func (c *Client) GetToken() (*Result, error) {
 
+	fmt.Println("c.auth.AuthType:", c.auth.AuthType)
+
 	switch c.auth.AuthType {
 
 	case "password":
@@ -174,6 +175,7 @@ func (c *Client) GetToken() (*Result, error) {
 		if err != nil {
 			return nil, err
 		}
+
 		return r, nil
 
 	default:
@@ -221,8 +223,6 @@ func getTokenCode() (*Result, error) {
 
 	var r *Result
 
-	//ctx := context.Background()'
-
 	http.HandleFunc("/", home)
 	http.HandleFunc("/oauth2", authorize)
 
@@ -251,8 +251,6 @@ func (c *Client) getTokenPassword() (*Result, error) {
 	form.Set("password", c.auth.Credentials.Password)
 	form.Set("grant_type", "password")
 
-	//fmt.Println(c.auth)
-
 	request, err := http.NewRequest("POST", c.auth.Endpoints.TokenURL, strings.NewReader(form.Encode())) // URL-encoded payload
 	if err != nil {
 		return nil, err
@@ -275,7 +273,6 @@ func (c *Client) getTokenPassword() (*Result, error) {
 		return nil, err
 	}
 
-	//fmt.Println(string(body))
 	err = json.Unmarshal(body, &r)
 	if err != nil {
 		return nil, err
@@ -286,93 +283,98 @@ func (c *Client) getTokenPassword() (*Result, error) {
 
 func (c *Client) getTokenJWT() (*Result, error) {
 
-	//https://help.salesforce.com/articleView?id=remoteaccess_oauth_jwt_flow.htm&type=5
-	//https://github.com/golang/oauth2/blob/master/jwt/jwt.go
-
-	var (
-		grantType = "urn:ietf:params:oauth:grant-type:jwt-bearer"
-		header    = &jws.Header{Algorithm: "RS256", Typ: "JWT"}
-		//defaultHeader    = &jws.Header{Algorithm: "RS256", Typ: "JWT"}
-	)
-
-	pkFile, err := ioutil.ReadFile("salesforce/key2.pem")
+	// openssl req  -nodes -new -x509  -keyout server.key -out server.cert
+	//This produces a cert with an unencrypted private key. Upload the cert to your connected app.
+	dat, err := ioutil.ReadFile("salesforce/server.key")
 	if err != nil {
-		log.Fatal(err)
+		panic(err)
 	}
 
-	pk, err := parseRsaPrivateKeyFromPemStr(string(pkFile))
+	signKey, err := jwt.ParseRSAPrivateKeyFromPEM(dat)
 	if err != nil {
-		log.Fatal(err)
-	}
-	//fmt.Println(pk)
-
-	claimSet := &jws.ClaimSet{
-		Iss:   c.auth.Consumer.Key + "." + c.auth.Consumer.Secret,
-		Sub:   c.auth.Credentials.Username,
-		Scope: strings.Join(c.auth.Consumer.Scopes, " "),
-		Aud:   c.auth.Endpoints.TokenURL,
+		panic(err)
 	}
 
-	h := *header
-	//h.KeyID = //https://github.com/golang/oauth2/blob/master/jwt/jwt.go
+	now := time.Now().UTC()
+	exp := now.Add(24 * time.Hour)
 
-	jwt, err := jws.Encode(&h, claimSet, pk)
+	// create a signer for rsa 256
+	t := jwt.New(jwt.GetSigningMethod("RS256"))
+
+	type customClaims struct {
+		Sub string `json:"sub"`
+		jwt.StandardClaims
+	}
+
+	claims := customClaims{
+		c.auth.Credentials.Username,
+		jwt.StandardClaims{
+			Issuer:    c.auth.Consumer.Key,
+			Audience:  "https://login.salesforce.com",
+			NotBefore: now.Unix(),
+			ExpiresAt: exp.Unix(),
+			IssuedAt:  now.Unix(),
+		},
+	}
+
+	t.Claims = claims
+	jwt, err := t.SignedString(signKey)
+	if err != nil {
+		panic(err)
+	}
+
+	form := url.Values{}
+	form.Set("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer")
+	form.Set("assertion", jwt)
+
+	req, err := http.NewRequest("POST", c.auth.Endpoints.TokenURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		panic(err)
+	}
+
+	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		panic(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		return nil, errors.New(res.Status)
+	}
+
+	//body, _ := ioutil.ReadAll(res.Body)
+	body, err := ioutil.ReadAll(io.LimitReader(res.Body, 1<<20))
 	if err != nil {
 		return nil, err
 	}
-	//	fmt.Println(claimSet)
 
-	form := url.Values{}
-	form.Set("grant_type", grantType)
-	form.Set("assertion", jwt) //assertion	The assertion is the entire JWT value.
-
-	resp, err := c.client.PostForm(c.auth.Endpoints.TokenURL, form)
-	if err != nil {
-		return nil, err //fmt.Errorf("oauth2: cannot fetch token: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return nil, errors.New(resp.Status)
-	}
-
-	body, err := ioutil.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return nil, err //fmt.Errorf("oauth2: cannot fetch token: %v", err)
-	}
-
-	var r *Result
+	var r Result
 
 	err = json.Unmarshal(body, &r)
 	if err != nil {
 		return nil, err
 	}
 
-	fmt.Println("r = ", r)
+	return &r, nil
 
-	return r, nil
-
-	/*
-		claims := jwt.MapClaims{}
-
-		//claims["iss"] = "3MVG99OxTyEMCQ3gNp2PjkqeZKxnmAiG1xV4oHh9AKL_rSK.BoSVPGZHQukXnVjzRgSuQqGn75NL7yfkQcyy7"
-		claims["iss"] = "cpd"
-		claims["sub"] = c.auth.Credentials.Username
-		claims["aud"] = c.auth.Endpoints.TokenURL
-		claims["exp"] = time.Now().Add(time.Minute * 30).Unix()
-	*/
 }
 
 func parseRsaPrivateKeyFromPemStr(privPEM string) (*rsa.PrivateKey, error) {
+
 	block, _ := pem.Decode([]byte(privPEM))
 	if block == nil {
 		return nil, errors.New("failed to parse PEM block containing the key")
 	}
 
-	priv, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	//priv, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+
+	priv, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+
 	if err != nil {
 		return nil, err
 	}
 
-	return priv, nil
+	p := priv.(*rsa.PrivateKey)
+	return p, nil
 }
