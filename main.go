@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"net/http"
 
 	"github.com/zen37/cpd/salesforce"
 	"gopkg.in/yaml.v2"
@@ -41,8 +42,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	//fmt.Println(cfg)
-
 	sfClient, err := salesforce.New(salesforce.Auth{
 		AuthType: cfg.AuthType,
 		Consumer: salesforce.Consumer{
@@ -63,10 +62,42 @@ func main() {
 	if err != nil {
 		log.Fatalln(err)
 	}
-	//fmt.Println(sfClient)
-	accessToken, err := sfClient.GetToken()
+
+	//	fmt.Println(sfClient)
+
+	token, err := sfClient.GetToken()
 	if err != nil {
 		log.Fatalln(err)
 	}
-	fmt.Println(accessToken)
+	//fmt.Println("token=", token)
+	//fmt.Println()
+
+	//api := "/services/data/v51.0/limits/"
+	//	api := "/services/data/v51.0/sobjects/Account/quickActions"
+	api := "/services/data/v51.0/sobjects/Account"
+
+	limits := token.Instance + api
+
+	req, err := http.NewRequest("GET", limits, nil)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		log.Fatalln("StatusCode=", resp.Status)
+	}
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	fmt.Println(string(body))
+
 }
