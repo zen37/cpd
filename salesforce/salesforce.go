@@ -21,13 +21,22 @@ import (
 	"golang.org/x/oauth2"
 )
 
+type AuthType string //int
+
+const (
+	authTypePassword AuthType = "password" //AuthType = iota
+	authTypeCode     AuthType = "code"
+	authTypeJWT      AuthType = "jwt"
+)
+
 type Result struct {
 	AccessToken string `json:"access_token"`
+	Instance    string `json:"instance_url"`
 }
 
 type (
 	Auth struct {
-		AuthType    string
+		AuthType    AuthType //  string
 		Credentials Credentials
 		Consumer    Consumer
 		Endpoints   Endpoints
@@ -67,20 +76,21 @@ func New(auth Auth) (*Client, error) {
 
 	switch auth.AuthType {
 
-	case "password":
-
+	case authTypePassword:
 		err := authPassword(&c, auth)
 		if err != nil {
 			return nil, err
 		}
 
-	case "code":
+	case authTypeCode:
+		//case "code":
 		err := authCode(&c, auth)
 		if err != nil {
 			return nil, err
 		}
 
-	case "jwt":
+	//case "jwt":
+	case authTypeJWT:
 		err := authJWT(&c, auth)
 		if err != nil {
 			return nil, err
@@ -152,30 +162,29 @@ func authCode(c *Client, auth Auth) error {
 //GetToken ....
 func (c *Client) GetToken() (*Result, error) {
 
-	fmt.Println("c.auth.AuthType:", c.auth.AuthType)
+	//fmt.Println("c.auth.AuthType:", c.auth.AuthType)
 
 	switch c.auth.AuthType {
 
-	case "password":
+	case authTypePassword:
 		r, err := c.getTokenPassword()
 		if err != nil {
 			return nil, err
 		}
 		return r, nil
 
-	case "code":
+	case authTypeCode:
 		r, err := getTokenCode()
 		if err != nil {
 			return nil, err
 		}
 		return r, nil
 
-	case "jwt":
+	case authTypeJWT:
 		r, err := c.getTokenJWT()
 		if err != nil {
 			return nil, err
 		}
-
 		return r, nil
 
 	default:
@@ -236,12 +245,11 @@ func getTokenCode() (*Result, error) {
 	r.AccessToken = token.AccessToken
 
 	return r, nil
-
 }
 
 func (c *Client) getTokenPassword() (*Result, error) {
 
-	var r Result
+	var r *Result
 
 	form := &url.Values{}
 
@@ -273,12 +281,13 @@ func (c *Client) getTokenPassword() (*Result, error) {
 		return nil, err
 	}
 
+	//	fmt.Println(string(body))
 	err = json.Unmarshal(body, &r)
 	if err != nil {
 		return nil, err
 	}
 
-	return &r, nil
+	return r, nil
 }
 
 func (c *Client) getTokenJWT() (*Result, error) {
@@ -356,6 +365,7 @@ func (c *Client) getTokenJWT() (*Result, error) {
 		return nil, err
 	}
 
+	//	fmt.Println(string(body))
 	return &r, nil
 
 }
@@ -378,3 +388,14 @@ func parseRsaPrivateKeyFromPemStr(privPEM string) (*rsa.PrivateKey, error) {
 	p := priv.(*rsa.PrivateKey)
 	return p, nil
 }
+
+/*
+func (auth AuthType) String() string {
+	types := [...]string{
+		"password",
+		"code",
+		"jwt",
+	}
+	return types[auth]
+}
+*/
